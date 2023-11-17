@@ -1,0 +1,241 @@
+library(ggplot2)
+library(dplyr)
+library(gridExtra) # generate plot 
+
+data <- read.csv("Bird_data.csv", header = TRUE, sep = ",")
+head(data)
+
+# --------------------------------------------------------
+# Research Question:
+# --------------------------------------------------------
+# Is there a significant difference in the average count of 
+# House Sparrows and Starlings between rural and suburban areas?
+# --------------------------------------------------------
+
+# Set Up
+house_sparrow_color <- '#FF0000'# Consistent color for visual 
+starling_color <- "#00A0A0"
+missing_data <- sapply(data, function(x) sum(is.na(x)))
+print(missing_data) # Check for missing values
+data$subrur_fact <- factor(ifelse(data$subrur == 1, "(sub)urban", "rural"))
+
+# Exploratory data analysis
+# -----------------------------------------------------------------------------
+# Function: plot_boxplot  
+# -----------------------------------------------------------------------------
+# Input:
+# - data: A data frame containing the data to be visualized.
+# - col: The name of the column to visualize.
+# 
+# Output:
+# - A ggplot2 object displaying a boxplot of the specified column by site type.
+# -----------------------------------------------------------------------------
+plot_boxplot <- function(data, col) {
+  ggplot(data, aes(x=subrur_fact, y=get(col), fill=subrur_fact)) +
+    geom_boxplot() +
+    labs(title=paste("Distribution of", col, "by Site Type"),
+         x="Site Type",
+         y=col,
+         fill="Site Type") +
+    theme_minimal()
+}
+p1 <- plot_boxplot(data, "housesparrow")
+p2 <- plot_boxplot(data, "starling")
+p3 <- plot_boxplot(data, "temperature")
+grid.arrange(p1, p2, p3, ncol=1) # Figure 1
+
+
+# Average counts of housesparrow and starling over the years
+aggregated_data_area <- data %>%
+  group_by(year, subrur_fact) %>%
+  summarise(
+    avg_housesparrow = mean(housesparrow, na.rm = TRUE),
+    avg_starling = mean(starling, na.rm = TRUE)
+  )
+
+# Compare the counts in rural vs suburban/urban areas - # Figure 2
+p4 <-ggplot(aggregated_data_area, aes(x=year)) + 
+  geom_line(aes(y=avg_housesparrow, color="House Sparrow")) +
+  geom_line(aes(y=avg_starling, color="Starling")) +
+  labs(title="Average Counts of Birds Over the Years", y="Count", x="Year") +
+  theme_minimal()
+
+p5<- ggplot(aggregated_data_area, aes(x=year, y=avg_housesparrow, colour=subrur_fact, 
+                                 group=interaction(subrur_fact))) + 
+  geom_point() + geom_line() +
+  labs(title="House Sparrow Counts in Different Areas over Year", y="Count", x="Year")+
+  theme_minimal()
+
+p6 <- ggplot(aggregated_data_area, aes(x=year, y=avg_starling, colour=subrur_fact, 
+                                 group=interaction(subrur_fact))) + 
+  geom_point() + geom_line() + 
+  labs(title="Starling Counts in Different Areas over Year", y="Count", x="Year")+
+  theme_minimal()
+
+grid.arrange(p4, p5, p6, ncol=1)
+
+# Parametric Test
+# -----------------------------------------------------------------------------
+# Function: compute_p_value_ttest  
+# -----------------------------------------------------------------------------
+# Input:
+# - data: A data frame containing the data for the t-test.
+# - col: The name of the column to be used for the t-test.
+# 
+# Output:
+# - A list containing the t-value and p-value of the t-test.
+# -----------------------------------------------------------------------------
+compute_p_value_ttest <- function(data, col) {
+  # Splitting the data into rural and suburban/urban groups based on the 'subrur' column
+  group_rural <- data[data$subrur == -1, col]
+  group_suburban <- data[data$subrur == 1, col]
+  # Performing the t-test
+  test_result <- t.test(group_rural, group_suburban)
+  return(list(t_value = test_result$statistic, p_value = test_result$p.value))
+}
+
+result_house_ttest <- compute_p_value_ttest(data, "housesparrow")
+result_star_ttest <- compute_p_value_ttest(data, "starling")
+paste("T-Test P-value for Housesparrow:", result_house_ttest$p_value)
+paste("T-Test P-value for Starling:", result_star_ttest$p_value)
+
+# Check Assumptions for the independent t-test by plotting distribution 
+oldPar <- par(no.readonly = TRUE)
+par(mfrow = c(2, 2), mar = c(4, 4, 2, 1), las = 1, bg = "white")
+# Extract data for the two species based on rural vs. suburban/urban classification
+house_sparrow_rural <- data[data$subrur == -1, ][["housesparrow"]]
+house_sparrow_suburban <- data[data$subrur == 1, ][["housesparrow"]]
+starling_rural <- data[data$subrur == -1, ][["starling"]]
+starling_suburban <- data[data$subrur == 1, ][["starling"]]
+hist(house_sparrow_rural, main = 'House Sparrow (Rural)', 
+     col = house_sparrow_color, border = "white", xlab = "Count", ylab = "Frequency")
+hist(house_sparrow_suburban, main = 'House Sparrow (Suburban/Urban)', 
+     col = house_sparrow_color, border = "white", xlab = "Count", ylab = "Frequency")
+hist(starling_rural, main = 'Starling (Rural)', 
+     col = starling_color, border = "white", xlab = "Count", ylab = "Frequency")
+hist(starling_suburban, main = 'Starling (Suburban/Urban)', 
+     col = starling_color, border = "white", xlab = "Count", ylab = "Frequency")
+par(oldPar) # Figure 3
+
+
+# Non parametric test 
+# Function: diff_in_means  
+# -----------------------------------------------------------------------------
+# Input:
+# - data: A data frame containing the data.
+# - col: The name of the column for which the difference in means needs to be 
+#        computed (default: "housesparrow").
+# 
+# Output:
+# - The difference between the mean values of the two groups in the 'subrur' column.
+# -----------------------------------------------------------------------------
+diff_in_means <- function(data, col = "housesparrow") {
+  means <- data %>%
+    group_by(subrur) %>%
+    summarise(mean_value = mean(get(col), na.rm = TRUE))
+  diff <- diff(means$mean_value)
+  return(diff)
+}
+# -----------------------------------------------------------------------------
+# Function: compute_p_value  
+# -----------------------------------------------------------------------------
+# Input:
+# - data: A data frame containing the data.
+# - col: The name of the column for which the p-value needs to be computed.
+# - n_permutations: Number of permutations to perform (default: 1000).
+# 
+# Output:
+# - A list containing:
+#   - p_value: The computed p-value.
+#   - observed_diff: The observed difference in means.
+#   - simulated_diffs: A vector of differences in means from the permutations.
+# -----------------------------------------------------------------------------
+compute_p_value <- function(data, col, n_permutations = 1000) {
+  set.seed(123) # ensure exact output each run 
+  observed_diff <- diff_in_means(data, col = col)
+  simulated_diffs <- replicate(n_permutations, {
+    shuffled_data <- data %>% 
+      mutate(subrur = sample(subrur)) # Shuffle the subrur labels
+    diff_in_means(shuffled_data, col = col)
+  })
+  
+  p_value <- mean(abs(simulated_diffs) >= abs(observed_diff))
+  return(list(p_value = p_value, observed_diff = observed_diff, simulated_diffs = simulated_diffs))
+}
+# -----------------------------------------------------------------------------
+# Function: plot_permutation_test  
+# -----------------------------------------------------------------------------
+# Input:
+# - simulated_diffs: A vector containing differences in means from permutations.
+# - observed_diff: The observed difference in means.
+# - title: Title for the plot.
+# - color: Fill color for the histogram.
+# 
+# Output:
+# - A ggplot object displaying the permutation test results.
+# -----------------------------------------------------------------------------
+plot_permutation_test <- function(simulated_diffs, observed_diff, title, color) {
+  ggplot() +
+    geom_histogram(aes(simulated_diffs, ..density..), bins=50, fill=color) +
+    geom_vline(aes(xintercept=observed_diff), color="red", linetype="dashed") +
+    labs(title=title,
+         x="Difference in Means",
+         y="Density")+
+    theme_minimal() 
+} 
+
+observed_diff_house <- diff_in_means(data,col = "housesparrow")
+observed_diff_star  <- diff_in_means(data,col = "starling")
+paste("Actual Diff for Housesparrow:", observed_diff_house)
+paste("Actual Diff Starling:", observed_diff_star)
+
+# Compute p-values and plot
+result_house <- compute_p_value(data, "housesparrow")
+result_star <- compute_p_value(data, "starling")
+paste("P-value for Housesparrow:", result_house$p_value)
+paste("P-value for Starling:", result_star$p_value)
+
+p9 <- plot_permutation_test(result_house$simulated_diffs, result_house$observed_diff, "Permutation Test for Difference in House Sparrow Counts",house_sparrow_color)
+p10 <- plot_permutation_test(result_star$simulated_diffs, result_star$observed_diff, "Permutation Test for Difference in Starling Counts",starling_color)
+grid.arrange(p9, p10,ncol=1) # Figure 4
+
+# Fit the linear model for Urban and Rural Starling data
+data_urban <- data[data$subrur == 1, ]; data_rural <- data[data$subrur == -1, ]
+model_urban_starling <- lm(starling ~ year, data = data_urban); model_rural_starling <- lm(starling ~ year, data = data_rural)
+slope_urban <- coef(model_urban_starling)["year"]; slope_rural <- coef(model_rural_starling)["year"]
+ggplot(aggregated_data_area, aes(x=year, y=avg_starling, colour=subrur_fact, # Figure 5
+                                       group=interaction(subrur_fact))) + 
+  geom_point() + 
+  geom_line() + 
+  geom_smooth(method = "lm", se = FALSE) + #regression lines
+  labs(title="Starling Counts in Different Areas over Year", y="Count", x="Year")+
+  theme_minimal()+
+  annotate("text", x = min(aggregated_data_area$year), y = max(aggregated_data_area$avg_starling), 
+           label = paste("Urban Slope:", round(slope_urban, 2), "\nRural Slope:", round(slope_rural, 2)), 
+           hjust=0)
+
+
+# -------------------------------------------------
+library(car) # leveneTest
+# Appendix 1 
+# Relationship between temperature and bird counts
+p7 <- ggplot(data, aes(x=temperature, y=housesparrow)) +
+  geom_point(color= house_sparrow_color) +
+  labs(title="House Sparrow Counts vs Temperature", y="Count", x="Temperature")+
+  theme_minimal()
+
+p8 <- ggplot(data, aes(x=temperature, y=starling)) +
+  geom_point(color= starling_color) +
+  labs(title="Starling Counts vs Temperature", y="Count", x="Temperature")+
+  theme_minimal()
+
+grid.arrange(p7, p8,ncol=1) 
+
+# Appendix 2
+# Test of equality of variance assumption
+leveneTest(housesparrow ~ factor(subrur), data = data)
+leveneTest(starling ~ factor(subrur), data = data)
+
+
+
+
